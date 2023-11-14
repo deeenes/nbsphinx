@@ -1,17 +1,27 @@
+from pathlib import Path
+
 from setuptools import setup
 
 # "import" __version__
-__version__ = '0.8.11'
-for line in open('src/nbsphinx.py'):
-    if line.startswith('__version__'):
-        exec(line)
-        break
+__version__ = 'unknown'
+with Path('src/nbsphinx/__init__.py').open() as f:
+    for line in f:
+        if line.startswith('__version__'):
+            exec(line)
+            break
 
 setup(
     name='nbsphinx',
     version=__version__,
     package_dir={'': 'src'},
-    py_modules=['nbsphinx'],
+    packages=['nbsphinx'],
+    package_data={'nbsphinx': [
+        '_static/nbsphinx-code-cells.css_t',
+        '_static/nbsphinx-gallery.css',
+        '_static/nbsphinx-no-thumbnail.svg',
+        '_static/nbsphinx-broken-thumbnail.svg',
+        '_texinputs/nbsphinx.sty',
+    ]},
     python_requires='>=3.6',
     install_requires=[
         'docutils',
@@ -24,7 +34,7 @@ setup(
     author='Matthias Geier',
     author_email='Matthias.Geier@gmail.com',
     description='Jupyter Notebook Tools for Sphinx',
-    long_description=open('README.rst').read(),
+    long_description=Path('README.rst').read_text(),
     license='MIT',
     keywords='Sphinx Jupyter notebook'.split(),
     url='https://nbsphinx.readthedocs.io/',
@@ -46,5 +56,4 @@ setup(
         'Programming Language :: Python :: 3',
         'Topic :: Documentation :: Sphinx',
     ],
-    zip_safe=True,
 )

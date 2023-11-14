@@ -1,29 +1,9 @@
-# Copyright (c) 2015-2022 Matthias Geier
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
-
 """Jupyter Notebook Tools for Sphinx.
 
 https://nbsphinx.readthedocs.io/
 
 """
-__version__ = '0.8.10'
+__version__ = '0.9.3'
 
 import collections.abc
 import copy
@@ -50,6 +30,11 @@ import sphinx.environment
 import sphinx.errors
 import sphinx.transforms.post_transforms.images
 from sphinx.util.matching import patmatch
+try:
+    from sphinx.util.display import status_iterator
+except ImportError:
+    # This will be removed in Sphinx 8:
+    from sphinx.util import status_iterator
 import traitlets
 
 
@@ -88,6 +73,12 @@ DISPLAY_DATA_PRIORITY_LATEX = (
     'text/markdown',
     'text/plain',
 )
+
+THUMBNAIL_MIME_TYPES = {
+    'image/svg+xml': '.svg',
+    'image/png': '.png',
+    'image/jpeg': '.jpg',
+}
 
 # The default rst template name is changing in nbconvert 6, so we substitute
 # it in to the *extends* directive.
@@ -256,7 +247,9 @@ RST_TEMPLATE = """
 {%- if 'nbsphinx-gallery' in cell.metadata
     or 'nbsphinx-gallery' in cell.metadata.get('tags', [])
     or 'nbsphinx-toctree' in cell.metadata
-    or 'nbsphinx-toctree' in cell.metadata.get('tags', []) %}
+    or 'nbsphinx-toctree' in cell.metadata.get('tags', [])
+    or 'nbsphinx-link-gallery' in cell.metadata
+    or 'nbsphinx-link-gallery' in cell.metadata.get('tags', []) %}
 {{ cell | extract_gallery_or_toctree }}
 {%- else %}
 {{ cell | save_attachments or super() | replace_attachments }}
@@ -303,521 +296,6 @@ RST_TEMPLATE = """
 {{ super() }}
 {% endblock footer %}
 """.replace('__RST_DEFAULT_TEMPLATE__', nbconvert.RSTExporter().template_file)
-
-
-# MEMO: the nbsphinxfancyoutput environment recycles some internal Sphinx
-# LaTeX macros, as testify the @ in their names.  At 5.1.0 these macros
-# got modified so we now have two cases for the nbsphinxfancyoutput
-# definition: Sphinx >= 5.1.0 or Sphinx < 5.1.0 (and >= 1.7.0 at least).
-
-# MEMO: since Sphinx 2.0 the upstream \sphinxincludegraphics is similar and
-# slightly better than the \nbsphinxincludegraphics defined here.  So for the
-# >= 5.1.0 branch of nbsphinxfancyoutput, the code does no replacement of
-# \sphinxincludegraphics by \nbsphinxincludegraphics anymore.
-LATEX_PREAMBLE = r"""
-% Jupyter Notebook code cell colors
-\definecolor{nbsphinxin}{HTML}{307FC1}
-\definecolor{nbsphinxout}{HTML}{BF5B3D}
-\definecolor{nbsphinx-code-bg}{HTML}{F5F5F5}
-\definecolor{nbsphinx-code-border}{HTML}{E0E0E0}
-\definecolor{nbsphinx-stderr}{HTML}{FFDDDD}
-% ANSI colors for output streams and traceback highlighting
-\definecolor{ansi-black}{HTML}{3E424D}
-\definecolor{ansi-black-intense}{HTML}{282C36}
-\definecolor{ansi-red}{HTML}{E75C58}
-\definecolor{ansi-red-intense}{HTML}{B22B31}
-\definecolor{ansi-green}{HTML}{00A250}
-\definecolor{ansi-green-intense}{HTML}{007427}
-\definecolor{ansi-yellow}{HTML}{DDB62B}
-\definecolor{ansi-yellow-intense}{HTML}{B27D12}
-\definecolor{ansi-blue}{HTML}{208FFB}
-\definecolor{ansi-blue-intense}{HTML}{0065CA}
-\definecolor{ansi-magenta}{HTML}{D160C4}
-\definecolor{ansi-magenta-intense}{HTML}{A03196}
-\definecolor{ansi-cyan}{HTML}{60C6C8}
-\definecolor{ansi-cyan-intense}{HTML}{258F8F}
-\definecolor{ansi-white}{HTML}{C5C1B4}
-\definecolor{ansi-white-intense}{HTML}{A1A6B2}
-\definecolor{ansi-default-inverse-fg}{HTML}{FFFFFF}
-\definecolor{ansi-default-inverse-bg}{HTML}{000000}
-
-% Define an environment for non-plain-text code cell outputs (e.g. images)
-\newbox\nbsphinxpromptbox
-\makeatletter
-\@ifpackagelater{sphinx}{2022/06/30}{% "later" means here "at least"
-% In this branch Sphinx is at least at 5.1.0
-\newenvironment{nbsphinxfancyoutput}{%
-\sphinxcolorlet{VerbatimColor}{white}%
-\sphinxcolorlet{VerbatimBorderColor}{nbsphinx-code-border}%
-\spx@verb@boxes@fcolorbox@setup
-    % for \sphinxincludegraphics check of maximal height
-    \spx@image@maxheight         \textheight
-    \advance\spx@image@maxheight -\spx@boxes@border@top
-    \advance\spx@image@maxheight -\spx@boxes@padding@top
-    \advance\spx@image@maxheight -\spx@boxes@padding@bottom
-    \advance\spx@image@maxheight -\spx@boxes@border@bottom
-    \advance\spx@image@maxheight -\baselineskip
-\def\sphinxVerbatim@Before{\nbsphinxfancyaddprompt}%
-\def\sphinxVerbatim@After {\@empty}%
-\def\FrameCommand     {\sphinxVerbatim@FrameCommand}%
-\def\FirstFrameCommand{\sphinxVerbatim@FirstFrameCommand}%
-\def\MidFrameCommand  {\sphinxVerbatim@MidFrameCommand}%
-\def\LastFrameCommand {\sphinxVerbatim@LastFrameCommand}%
-\MakeFramed{\advance\hsize-\width\@totalleftmargin\z@\linewidth\hsize\@setminipage}%
-\lineskip=1ex\lineskiplimit=1ex\raggedright%
-}{\par\unskip\@minipagefalse\endMakeFramed}
-\def\nbsphinxfancyaddprompt{\ifvoid\nbsphinxpromptbox\else
-    \kern\spx@boxes@border@top\kern\spx@boxes@padding@top
-    \copy\nbsphinxpromptbox
-    \kern-\ht\nbsphinxpromptbox\kern-\dp\nbsphinxpromptbox
-    \kern-\spx@boxes@padding@top\kern-\spx@boxes@border@top
-    \nointerlineskip
-    \fi}
-}% End of Sphinx >= 5.1.0 branch
-{% This branch for Sphinx < 5.1.0
-\newenvironment{nbsphinxfancyoutput}{%
-    % Avoid fatal error with framed.sty if graphics too long to fit on one page
-    \let\sphinxincludegraphics\nbsphinxincludegraphics
-    \nbsphinx@image@maxheight\textheight
-    \advance\nbsphinx@image@maxheight -2\fboxsep   % default \fboxsep 3pt
-    \advance\nbsphinx@image@maxheight -2\fboxrule  % default \fboxrule 0.4pt
-    \advance\nbsphinx@image@maxheight -\baselineskip
-\def\nbsphinxfcolorbox{\spx@fcolorbox{nbsphinx-code-border}{white}}%
-\def\FrameCommand{\nbsphinxfcolorbox\nbsphinxfancyaddprompt\@empty}%
-\def\FirstFrameCommand{\nbsphinxfcolorbox\nbsphinxfancyaddprompt\sphinxVerbatim@Continues}%
-\def\MidFrameCommand{\nbsphinxfcolorbox\sphinxVerbatim@Continued\sphinxVerbatim@Continues}%
-\def\LastFrameCommand{\nbsphinxfcolorbox\sphinxVerbatim@Continued\@empty}%
-\MakeFramed{\advance\hsize-\width\@totalleftmargin\z@\linewidth\hsize\@setminipage}%
-\lineskip=1ex\lineskiplimit=1ex\raggedright%
-}{\par\unskip\@minipagefalse\endMakeFramed}
-\def\nbsphinxfancyaddprompt{\ifvoid\nbsphinxpromptbox\else
-    \kern\fboxrule\kern\fboxsep
-    \copy\nbsphinxpromptbox
-    \kern-\ht\nbsphinxpromptbox\kern-\dp\nbsphinxpromptbox
-    \kern-\fboxsep\kern-\fboxrule\nointerlineskip
-    \fi}
-}% end of Sphinx < 5.1.0 branch
-\makeatother
-\newlength\nbsphinxcodecellspacing
-\setlength{\nbsphinxcodecellspacing}{0pt}
-
-% Define support macros for attaching opening and closing lines to notebooks
-\newsavebox\nbsphinxbox
-\makeatletter
-\newcommand{\nbsphinxstartnotebook}[1]{%
-    \par
-    % measure needed space
-    \setbox\nbsphinxbox\vtop{{#1\par}}
-    % reserve some space at bottom of page, else start new page
-    \needspace{\dimexpr2.5\baselineskip+\ht\nbsphinxbox+\dp\nbsphinxbox}
-    % mimic vertical spacing from \section command
-      \addpenalty\@secpenalty
-      \@tempskipa 3.5ex \@plus 1ex \@minus .2ex\relax
-      \addvspace\@tempskipa
-      {\Large\@tempskipa\baselineskip
-             \advance\@tempskipa-\prevdepth
-             \advance\@tempskipa-\ht\nbsphinxbox
-             \ifdim\@tempskipa>\z@
-               \vskip \@tempskipa
-             \fi}
-    \unvbox\nbsphinxbox
-    % if notebook starts with a \section, prevent it from adding extra space
-    \@nobreaktrue\everypar{\@nobreakfalse\everypar{}}%
-    % compensate the parskip which will get inserted by next paragraph
-    \nobreak\vskip-\parskip
-    % do not break here
-    \nobreak
-}% end of \nbsphinxstartnotebook
-
-\newcommand{\nbsphinxstopnotebook}[1]{%
-    \par
-    % measure needed space
-    \setbox\nbsphinxbox\vbox{{#1\par}}
-    \nobreak % it updates page totals
-    \dimen@\pagegoal
-    \advance\dimen@-\pagetotal \advance\dimen@-\pagedepth
-    \advance\dimen@-\ht\nbsphinxbox \advance\dimen@-\dp\nbsphinxbox
-    \ifdim\dimen@<\z@
-      % little space left
-      \unvbox\nbsphinxbox
-      \kern-.8\baselineskip
-      \nobreak\vskip\z@\@plus1fil
-      \penalty100
-      \vskip\z@\@plus-1fil
-      \kern.8\baselineskip
-    \else
-      \unvbox\nbsphinxbox
-    \fi
-}% end of \nbsphinxstopnotebook
-
-% Ensure height of an included graphics fits in nbsphinxfancyoutput frame
-% The Sphinx >= 5.1.0 version of nbsphinxfancyoutput does not use this macro
-% as \sphinxincludegraphics is since Sphinx 2.0 similar and slightly better.
-\newdimen\nbsphinx@image@maxheight % set in nbsphinxfancyoutput environment
-\newcommand*{\nbsphinxincludegraphics}[2][]{%
-    \gdef\spx@includegraphics@options{#1}%
-    \setbox\spx@image@box\hbox{\includegraphics[#1,draft]{#2}}%
-    \in@false
-    \ifdim \wd\spx@image@box>\linewidth
-      \g@addto@macro\spx@includegraphics@options{,width=\linewidth}%
-      \in@true
-    \fi
-    % no rotation, no need to worry about depth
-    \ifdim \ht\spx@image@box>\nbsphinx@image@maxheight
-      \g@addto@macro\spx@includegraphics@options{,height=\nbsphinx@image@maxheight}%
-      \in@true
-    \fi
-    \ifin@
-      \g@addto@macro\spx@includegraphics@options{,keepaspectratio}%
-    \fi
-    \setbox\spx@image@box\box\voidb@x % clear memory
-    \expandafter\includegraphics\expandafter[\spx@includegraphics@options]{#2}%
-}% end of "\MakeFrame"-safe variant of \sphinxincludegraphics
-\makeatother
-
-\makeatletter
-\renewcommand*\sphinx@verbatim@nolig@list{\do\'\do\`}
-\begingroup
-\catcode`'=\active
-\let\nbsphinx@noligs\@noligs
-\g@addto@macro\nbsphinx@noligs{\let'\PYGZsq}
-\endgroup
-\makeatother
-\renewcommand*\sphinxbreaksbeforeactivelist{\do\<\do\"\do\'}
-\renewcommand*\sphinxbreaksafteractivelist{\do\.\do\,\do\:\do\;\do\?\do\!\do\/\do\>\do\-}
-\makeatletter
-\fvset{codes*=\sphinxbreaksattexescapedchars\do\^\^\let\@noligs\nbsphinx@noligs}
-\makeatother
-"""
-
-
-CSS_STRING = """
-/* CSS for nbsphinx extension */
-
-/* remove conflicting styling from Sphinx themes */
-div.nbinput.container div.prompt *,
-div.nboutput.container div.prompt *,
-div.nbinput.container div.input_area pre,
-div.nboutput.container div.output_area pre,
-div.nbinput.container div.input_area .highlight,
-div.nboutput.container div.output_area .highlight {
-    border: none;
-    padding: 0;
-    margin: 0;
-    box-shadow: none;
-}
-
-div.nbinput.container > div[class*=highlight],
-div.nboutput.container > div[class*=highlight] {
-    margin: 0;
-}
-
-div.nbinput.container div.prompt *,
-div.nboutput.container div.prompt * {
-    background: none;
-}
-
-div.nboutput.container div.output_area .highlight,
-div.nboutput.container div.output_area pre {
-    background: unset;
-}
-
-div.nboutput.container div.output_area div.highlight {
-    color: unset;  /* override Pygments text color */
-}
-
-/* avoid gaps between output lines */
-div.nboutput.container div[class*=highlight] pre {
-    line-height: normal;
-}
-
-/* input/output containers */
-div.nbinput.container,
-div.nboutput.container {
-    display: -webkit-flex;
-    display: flex;
-    align-items: flex-start;
-    margin: 7px 0 0 0;
-    width: 100%%;
-}
-@media (max-width: %(nbsphinx_responsive_width)s) {
-    div.nbinput.container,
-    div.nboutput.container {
-        flex-direction: column;
-    }
-}
-
-/* input container */
-div.nbinput.container {
-    padding-top: 5px;
-}
-
-/* last container */
-div.nblast.container {
-    padding-bottom: 5px;
-}
-
-/* input prompt */
-div.nbinput.container div.prompt pre {
-    color: #307FC1;
-}
-
-/* output prompt */
-div.nboutput.container div.prompt pre {
-    color: #BF5B3D;
-}
-
-/* all prompts */
-div.nbinput.container div.prompt,
-div.nboutput.container div.prompt {
-    width: %(nbsphinx_prompt_width)s;
-    padding-top: 5px;
-    position: relative;
-    user-select: none;
-}
-
-div.nbinput.container div.prompt > div,
-div.nboutput.container div.prompt > div {
-    position: absolute;
-    right: 0;
-    margin-right: 0.3ex;
-}
-
-@media (max-width: %(nbsphinx_responsive_width)s) {
-    div.nbinput.container div.prompt,
-    div.nboutput.container div.prompt {
-        width: unset;
-        text-align: left;
-        padding: 0.4em;
-    }
-    div.nboutput.container div.prompt.empty {
-        padding: 0;
-    }
-
-    div.nbinput.container div.prompt > div,
-    div.nboutput.container div.prompt > div {
-        position: unset;
-    }
-}
-
-/* disable scrollbars and line breaks on prompts */
-div.nbinput.container div.prompt pre,
-div.nboutput.container div.prompt pre {
-    overflow: hidden;
-    white-space: pre;
-}
-
-/* input/output area */
-div.nbinput.container div.input_area,
-div.nboutput.container div.output_area {
-    -webkit-flex: 1;
-    flex: 1;
-    overflow: auto;
-}
-@media (max-width: %(nbsphinx_responsive_width)s) {
-    div.nbinput.container div.input_area,
-    div.nboutput.container div.output_area {
-        width: 100%%;
-    }
-}
-
-/* input area */
-div.nbinput.container div.input_area {
-    border: 1px solid #e0e0e0;
-    border-radius: 2px;
-    background: #f5f5f5;
-}
-
-/* override MathJax center alignment in output cells */
-div.nboutput.container div[class*=MathJax] {
-    text-align: left !important;
-}
-
-/* override sphinx.ext.imgmath center alignment in output cells */
-div.nboutput.container div.math p {
-    text-align: left;
-}
-
-/* standard error */
-div.nboutput.container div.output_area.stderr {
-    background: #fdd;
-}
-
-/* ANSI colors */
-.ansi-black-fg { color: #3E424D; }
-.ansi-black-bg { background-color: #3E424D; }
-.ansi-black-intense-fg { color: #282C36; }
-.ansi-black-intense-bg { background-color: #282C36; }
-.ansi-red-fg { color: #E75C58; }
-.ansi-red-bg { background-color: #E75C58; }
-.ansi-red-intense-fg { color: #B22B31; }
-.ansi-red-intense-bg { background-color: #B22B31; }
-.ansi-green-fg { color: #00A250; }
-.ansi-green-bg { background-color: #00A250; }
-.ansi-green-intense-fg { color: #007427; }
-.ansi-green-intense-bg { background-color: #007427; }
-.ansi-yellow-fg { color: #DDB62B; }
-.ansi-yellow-bg { background-color: #DDB62B; }
-.ansi-yellow-intense-fg { color: #B27D12; }
-.ansi-yellow-intense-bg { background-color: #B27D12; }
-.ansi-blue-fg { color: #208FFB; }
-.ansi-blue-bg { background-color: #208FFB; }
-.ansi-blue-intense-fg { color: #0065CA; }
-.ansi-blue-intense-bg { background-color: #0065CA; }
-.ansi-magenta-fg { color: #D160C4; }
-.ansi-magenta-bg { background-color: #D160C4; }
-.ansi-magenta-intense-fg { color: #A03196; }
-.ansi-magenta-intense-bg { background-color: #A03196; }
-.ansi-cyan-fg { color: #60C6C8; }
-.ansi-cyan-bg { background-color: #60C6C8; }
-.ansi-cyan-intense-fg { color: #258F8F; }
-.ansi-cyan-intense-bg { background-color: #258F8F; }
-.ansi-white-fg { color: #C5C1B4; }
-.ansi-white-bg { background-color: #C5C1B4; }
-.ansi-white-intense-fg { color: #A1A6B2; }
-.ansi-white-intense-bg { background-color: #A1A6B2; }
-
-.ansi-default-inverse-fg { color: #FFFFFF; }
-.ansi-default-inverse-bg { background-color: #000000; }
-
-.ansi-bold { font-weight: bold; }
-.ansi-underline { text-decoration: underline; }
-
-
-div.nbinput.container div.input_area div[class*=highlight] > pre,
-div.nboutput.container div.output_area div[class*=highlight] > pre,
-div.nboutput.container div.output_area div[class*=highlight].math,
-div.nboutput.container div.output_area.rendered_html,
-div.nboutput.container div.output_area > div.output_javascript,
-div.nboutput.container div.output_area:not(.rendered_html) > img{
-    padding: 5px;
-    margin: 0;
-}
-
-/* fix copybtn overflow problem in chromium (needed for 'sphinx_copybutton') */
-div.nbinput.container div.input_area > div[class^='highlight'],
-div.nboutput.container div.output_area > div[class^='highlight']{
-    overflow-y: hidden;
-}
-
-/* hide copybtn icon on prompts (needed for 'sphinx_copybutton') */
-.prompt .copybtn {
-    display: none;
-}
-
-/* Some additional styling taken form the Jupyter notebook CSS */
-.jp-RenderedHTMLCommon table,
-div.rendered_html table {
-  border: none;
-  border-collapse: collapse;
-  border-spacing: 0;
-  color: black;
-  font-size: 12px;
-  table-layout: fixed;
-}
-.jp-RenderedHTMLCommon thead,
-div.rendered_html thead {
-  border-bottom: 1px solid black;
-  vertical-align: bottom;
-}
-.jp-RenderedHTMLCommon tr,
-.jp-RenderedHTMLCommon th,
-.jp-RenderedHTMLCommon td,
-div.rendered_html tr,
-div.rendered_html th,
-div.rendered_html td {
-  text-align: right;
-  vertical-align: middle;
-  padding: 0.5em 0.5em;
-  line-height: normal;
-  white-space: normal;
-  max-width: none;
-  border: none;
-}
-.jp-RenderedHTMLCommon th,
-div.rendered_html th {
-  font-weight: bold;
-}
-.jp-RenderedHTMLCommon tbody tr:nth-child(odd),
-div.rendered_html tbody tr:nth-child(odd) {
-  background: #f5f5f5;
-}
-.jp-RenderedHTMLCommon tbody tr:hover,
-div.rendered_html tbody tr:hover {
-  background: rgba(66, 165, 245, 0.2);
-}
-
-/* Execution timestamps & timigs */
-.timing {
-    margin-top: 7px 0 0 0;
-    border-top: 1px solid #CCC;
-    padding-top: 3px;
-    padding-left: 5px!important;
-    background-color: var(--pst-color-surface, transparent);
-    color: var(--pst-color-text-base, #777777);
-}
-
-.timing > p {
-    font-size: 70%%!important;
-    font-family: monospace;
-    margin-bottom: 0px;
-    padding-bottom: 3px;
-}
-
-div[class*="highlight-"] {
-    margin: 0px!important;
-}
-"""
-
-CSS_STRING_READTHEDOCS = """
-/* CSS overrides for sphinx_rtd_theme */
-
-/* 24px margin */
-.nbinput.nblast.container,
-.nboutput.nblast.container {
-    margin-bottom: 19px;  /* padding has already 5px */
-}
-
-/* ... except between code cells! */
-.nblast.container + .nbinput.container {
-    margin-top: -19px;
-}
-
-.admonition > p:before {
-    margin-right: 4px;  /* make room for the exclamation icon */
-}
-
-/* Fix math alignment, see https://github.com/rtfd/sphinx_rtd_theme/pull/686 */
-.math {
-    text-align: unset;
-}
-"""
-
-CSS_STRING_CLOUD = """
-/* CSS overrides for cloud theme */
-
-/* nicer titles and more space for info and warning logos */
-
-div.admonition p.admonition-title {
-    background: rgba(0, 0, 0, .05);
-    margin: .5em -1em;
-    margin-top: -.5em !important;
-    padding: .5em .5em .5em 2.65em;
-}
-
-/* indent single paragraph */
-div.admonition {
-    text-indent: 20px;
-}
-/* don't indent multiple paragraphs */
-div.admonition > p {
-    text-indent: 0;
-}
-/* remove excessive padding */
-div.admonition.inline-title p.admonition-title {
-    padding-left: .2em;
-}
-"""
 
 
 class Exporter(nbconvert.RSTExporter):
@@ -945,7 +423,7 @@ class Exporter(nbconvert.RSTExporter):
 
         def warning(msg, *args):
             logger.warning(
-                '"nbsphinx-thumbnail": ' + msg, *args,
+                '"nbsphinx-thumbnail" in cell %s: ' + msg, cell_index, *args,
                 location=resources.get('nbsphinx_docname'),
                 type='nbsphinx', subtype='thumbnail')
             thumbnail['filename'] = _BROKEN_THUMBNAIL
@@ -953,64 +431,95 @@ class Exporter(nbconvert.RSTExporter):
         for cell_index, cell in enumerate(nb.cells):
             if 'nbsphinx-thumbnail' in cell.metadata:
                 data = cell.metadata['nbsphinx-thumbnail'].copy()
-                output_index = data.pop('output-index', -1)
+                output_index = data.pop('output-index', None)
                 tooltip = data.pop('tooltip', '')
                 if data:
                     warning('Invalid key(s): %s', set(data))
                     break
             elif 'nbsphinx-thumbnail' in cell.metadata.get('tags', []):
-                output_index = -1
+                output_index = None
                 tooltip = ''
             else:
                 continue
+
             if cell.cell_type != 'code':
-                warning('Only allowed in code cells; cell %s has type "%s"',
-                        cell_index, cell.cell_type)
+                warning(
+                    'Only allowed in code cells; wrong cell type: "%s"',
+                    cell.cell_type)
                 break
+
             if thumbnail:
                 warning('Only allowed once per notebook')
                 break
-            if not cell.outputs:
-                warning('No outputs in cell %s', cell_index)
-                break
-            if tooltip:
-                thumbnail['tooltip'] = tooltip
-            if output_index == -1:
+
+            if output_index is None:
                 output_index = len(cell.outputs) - 1
-            elif output_index >= len(cell.outputs):
-                warning('Invalid "output-index" in cell %s: %s',
-                        cell_index, output_index)
-                break
-            out = cell.outputs[output_index]
-            if out.output_type not in {'display_data', 'execute_result'}:
-                warning('Unsupported output type in cell %s/output %s: "%s"',
-                        cell_index, output_index, out.output_type)
+            try:
+                suffix = _extract_thumbnail(cell, output_index)
+            except _ExtractThumbnailException as e:
+                warning(*e.args)
                 break
 
-            for mime_type in DISPLAY_DATA_PRIORITY_HTML:
-                if mime_type not in out.data:
-                    continue
-                if mime_type == 'image/svg+xml':
-                    suffix = '.svg'
-                elif mime_type == 'image/png':
-                    suffix = '.png'
-                elif mime_type == 'image/jpeg':
-                    suffix = '.jpg'
-                else:
-                    continue
-                thumbnail['filename'] = '{}_{}_{}{}'.format(
-                    resources['unique_key'],
-                    cell_index,
-                    output_index,
-                    suffix,
-                )
-                break
-            else:
-                warning('Unsupported MIME type(s) in cell %s/output %s: %s',
-                        cell_index, output_index, set(out.data))
-                break
-        resources['nbsphinx_thumbnail'] = thumbnail
+            thumbnail['filename'] = '{}_{}_{}{}'.format(
+                resources['unique_key'],
+                cell_index,
+                output_index,
+                suffix,
+            )
+            if tooltip:
+                thumbnail['tooltip'] = tooltip
+
+        if not thumbnail:
+            # No explicit thumbnails were specified in the notebook.
+            # Now we are looking for the last output image in the notebook.
+            for cell_index, cell in reversed(list(enumerate(nb.cells))):
+                if cell.cell_type == 'code':
+                    for output_index in reversed(range(len(cell.outputs))):
+                        try:
+                            suffix = _extract_thumbnail(cell, output_index)
+                        except _ExtractThumbnailException:
+                            continue
+                        thumbnail['filename'] = '{}_{}_{}{}'.format(
+                            resources['unique_key'],
+                            cell_index,
+                            output_index,
+                            suffix,
+                        )
+                        # NB: we use this as marker for implicit thumbnail:
+                        thumbnail['tooltip'] = None
+                        break
+                    else:
+                        continue
+                    break
+
+        if thumbnail:
+            resources['nbsphinx_thumbnail'] = thumbnail
         return rststr, resources
+
+
+class _ExtractThumbnailException(Exception):
+    """Internal exception thrown by _extract_thumbnail()."""
+
+
+def _extract_thumbnail(cell, output_index):
+    if not cell.outputs:
+        raise _ExtractThumbnailException('No outputs')
+    if output_index not in range(len(cell.outputs)):
+        raise _ExtractThumbnailException(
+            'Invalid "output-index": %s', output_index)
+    out = cell.outputs[output_index]
+    if out.output_type not in {'display_data', 'execute_result'}:
+        raise _ExtractThumbnailException(
+            'Unsupported output type in output %s: "%s"',
+            output_index, out.output_type)
+    for mime_type in DISPLAY_DATA_PRIORITY_HTML:
+        if mime_type not in out.data or mime_type not in THUMBNAIL_MIME_TYPES:
+            continue
+        return THUMBNAIL_MIME_TYPES[mime_type]
+    else:
+        raise _ExtractThumbnailException(
+            'Unsupported MIME type(s) in output %s: %s',
+            output_index, set(out.data))
 
 
 class NotebookParser(rst.Parser):
@@ -1200,7 +709,7 @@ def _create_code_nodes(directive):
         return f'executed in {duration_str}, finished {finished}'
 
 
-    directive.state.document['nbsphinx_include_css'] = True
+    directive.state.document['nbsphinx_code_css'] = True
     execution_count = directive.options.get('execution-count')
     execution_start = directive.options.get('execution-start')
     execution_end = directive.options.get('execution-end')
@@ -1277,6 +786,10 @@ class GalleryToc(docutils.nodes.Element):
 
 class GalleryNode(docutils.nodes.Element):
     """A custom node for thumbnail galleries."""
+
+
+class DummyTocTree(docutils.nodes.Element):
+    """A dummy node to replace and disable sphinx.addnodes.toctree."""
 
 
 # See http://docutils.sourceforge.net/docs/howto/rst-directives.html
@@ -1362,7 +875,24 @@ class NbGallery(sphinx.directives.other.TocTree):
             return ret
         gallerytoc = GalleryToc()
         gallerytoc.extend(ret)
+        if isinstance(self, NbLinkGallery):
+            # Disable toctree processing:
+            toctree.__class__ = DummyTocTree
+            # Make invisible to LaTeX processing
+            gallerytoc = sphinx.addnodes.only('', gallerytoc, expr='html')
         return [gallerytoc]
+
+
+class NbLinkGallery(NbGallery):
+    """A thumbnail gallery for notebooks as links."""
+
+    # Not all options of TocTree are allowed:
+    option_spec = {
+        'name': rst.directives.unchanged,
+        'caption': rst.directives.unchanged_required,
+        'glob': rst.directives.flag,
+        'reversed': rst.directives.flag,
+    }
 
 
 def convert_pandoc(text, from_format, to_format):
@@ -1375,6 +905,17 @@ def convert_pandoc(text, from_format, to_format):
     if from_format != 'markdown' and to_format != 'rst':
         raise ValueError('Unsupported conversion')
     return markdown2rst(text)
+
+
+_CITE_ROLES = {
+    'data-cite': 'cite',
+    'data-footcite': 'footcite',
+}
+_CITE_ROLES.update({
+    f'{k}-{suffix}': f'{v}:{suffix}'
+    for k, v in _CITE_ROLES.items()
+    for suffix in ('p', 'ps', 't', 'ts', 'ct', 'cts')
+})
 
 
 class CitationParser(html.parser.HTMLParser):
@@ -1391,12 +932,11 @@ class CitationParser(html.parser.HTMLParser):
 
     def _check_cite(self, attrs):
         for name, value in attrs:
-            if name == 'data-cite':
-                self.cite = ':cite:`' + value + '`'
-                return True
-            elif name == 'data-footcite':
-                self.cite = ':footcite:`' + value + '`'
-                return True
+            try:
+                self.cite = f':{_CITE_ROLES[name]}:`{value}`'
+            except KeyError:
+                continue
+            return True
         return False
 
     def reset(self):
@@ -1525,6 +1065,8 @@ def markdown2rst(text):
     v = nbconvert.utils.pandoc.get_pandoc_version()
     if nbconvert.utils.version.check_version(v, '1.13'):
         input_format += '-native_divs+raw_html'
+    if nbconvert.utils.version.check_version(v, '2.0'):
+        input_format += '-smart'  # Smart quotes etc. are handled by Sphinx
 
     rststring = pandoc(text, input_format, 'rst', filter_func=filter_func)
     rststring = re.sub(
@@ -1573,7 +1115,7 @@ def pandoc(source, fmt, to, filter_func=None):
 
 def _extract_gallery_or_toctree(cell):
     """Extract links from Markdown cell and create gallery/toctree."""
-    # If both are available, "gallery" takes precedent
+    # If more than one is available, "gallery" takes precedence, then "toctree"
     if 'nbsphinx-gallery' in cell.metadata:
         lines = ['.. nbgallery::']
         options = cell.metadata['nbsphinx-gallery']
@@ -1585,6 +1127,12 @@ def _extract_gallery_or_toctree(cell):
         options = cell.metadata['nbsphinx-toctree']
     elif 'nbsphinx-toctree' in cell.metadata.get('tags', []):
         lines = ['.. toctree::']
+        options = {}
+    elif 'nbsphinx-link-gallery' in cell.metadata:
+        lines = ['.. nblinkgallery::']
+        options = cell.metadata['nbsphinx-link-gallery']
+    elif 'nbsphinx-link-gallery' in cell.metadata.get('tags', []):
+        lines = ['.. nblinkgallery::']
         options = {}
     else:
         assert False
@@ -1598,7 +1146,7 @@ def _extract_gallery_or_toctree(cell):
                 lines.append(':{}: {}'.format(option, value))
     except AttributeError:
         raise ValueError(
-            'invalid nbsphinx-gallery/nbsphinx-toctree option: {!r}'
+            'invalid nbsphinx-[link-]gallery/nbsphinx-toctree option: {!r}'
             .format(options))
 
     text = nbconvert.filters.markdown2rst(cell.source)
@@ -1617,8 +1165,7 @@ def _extract_gallery_or_toctree(cell):
             break
     lines.append('')  # empty line
     for ref in node.traverse(docutils.nodes.reference):
-        lines.append(ref.astext().replace('\n', '') +
-                     ' <' + unquote(ref.get('refuri')) + '>')
+        lines.append(ref['name'] + ' <' + unquote(ref.get('refuri')) + '>')
     return '\n    '.join(lines)
 
 
@@ -1673,12 +1220,12 @@ def _local_file_from_reference(node, document):
         if not refuri:
             # Target doesn't have URI
             return '', ''
-    if '://' in refuri:
+    if '://' in refuri or refuri.startswith('mailto:'):
         # Not a local link
         return '', ''
-    elif refuri.startswith('#') or refuri.startswith('mailto:'):
-        # Not a local link
-        return '', ''
+    elif refuri.startswith('#'):
+        # Kinda not a local link
+        return '', refuri
 
     # NB: We look for "fragment identifier" before unquoting
     match = re.match(r'^([^#]*)(#.*)$', refuri)
@@ -1719,7 +1266,15 @@ class RewriteLocalLinks(docutils.transforms.Transform):
             filename, fragment = _local_file_from_reference(
                 node, self.document)
             if not filename:
-                continue
+                if fragment:
+                    # This should not be needed if it weren't for
+                    # https://github.com/sphinx-doc/sphinx/issues/11336 and
+                    # https://github.com/sphinx-doc/sphinx/issues/11335
+                    filename = os.path.basename(env.doc2path(env.docname))
+                    if fragment == '#':
+                        fragment = ''
+                else:
+                    continue
 
             for s in env.config.source_suffix:
                 if filename.lower().endswith(s.lower()):
@@ -1767,8 +1322,8 @@ class CreateNotebookSectionAnchors(docutils.transforms.Transform):
     def apply(self):
         all_ids = set()
         for section in self.document.traverse(docutils.nodes.section):
-            title = section.children[0].astext()
-            link_id = title.replace(' ', '-')
+            title = section[0].astext()
+            link_id = title.replace(' ', '-').replace('"', '%22')
             if link_id in all_ids:
                 # Avoid duplicated anchors on the same page
                 continue
@@ -1961,7 +1516,13 @@ class GetSizeFromImages(
                 node['width'], node['height'] = map(str, size)
 
 
-original_toctree_resolve = sphinx.environment.adapters.toctree.TocTree.resolve
+if hasattr(sphinx.environment.adapters.toctree, '_resolve_toctree'):
+    # Since Sphinx 7.2.0
+    original_toctree_resolve = \
+        sphinx.environment.adapters.toctree._resolve_toctree
+else:
+    original_toctree_resolve = \
+        sphinx.environment.adapters.toctree.TocTree.resolve
 
 
 def patched_toctree_resolve(self, docname, builder, toctree, *args, **kwargs):
@@ -1981,7 +1542,7 @@ def patched_toctree_resolve(self, docname, builder, toctree, *args, **kwargs):
         self, docname, builder, toctree, *args, **kwargs)
     if not gallery or node is None:
         return node
-    if isinstance(node[0], docutils.nodes.caption):
+    if isinstance(node[0], (docutils.nodes.caption, docutils.nodes.title)):
         del node[1:]
     else:
         del node[:]
@@ -2092,6 +1653,11 @@ def builder_inited(app):
     env.nbsphinx_auxdir = os.path.join(env.doctreedir, 'nbsphinx')
     sphinx.util.ensuredir(env.nbsphinx_auxdir)
 
+    if app.builder.format == 'latex':
+        sphinx.util.fileutil.copy_asset(
+            os.path.join(os.path.dirname(__file__), '_texinputs'),
+            os.path.join(app.builder.outdir))
+
 
 def env_merge_info(app, env, docnames, other):
     env.nbsphinx_notebooks.update(other.nbsphinx_notebooks)
@@ -2118,20 +1684,12 @@ def env_purge_doc(app, env, docname):
 
 
 def html_page_context(app, pagename, templatename, context, doctree):
-    """Add CSS string to HTML pages that contain code cells."""
-    style = ''
-    if doctree and doctree.get('nbsphinx_include_css'):
-        style += CSS_STRING % app.config
-    if doctree and app.config.html_theme in (
-            'sphinx_rtd_theme',
-            'julia',
-            'dask_sphinx_theme',
-            ):
-        style += CSS_STRING_READTHEDOCS
-    if doctree and app.config.html_theme.endswith('cloud'):
-        style += CSS_STRING_CLOUD
-    if style:
-        context['body'] = '\n<style>' + style + '</style>\n' + context['body']
+    """Add CSS files for code cells and galleries."""
+    # NB: the CSS files are copied in html_collect_pages().
+    if doctree and doctree.get('nbsphinx_code_css'):
+        app.add_css_file('nbsphinx-code-cells.css')
+    if doctree and doctree.get('nbsphinx_gallery_css'):
+        app.add_css_file('nbsphinx-gallery.css')
 
 
 def html_collect_pages(app):
@@ -2139,7 +1697,6 @@ def html_collect_pages(app):
     files = set()
     for file_list in app.env.nbsphinx_files.values():
         files.update(file_list)
-    status_iterator = sphinx.util.status_iterator
     for file in status_iterator(files, 'copying linked files... ',
                                 sphinx.util.console.brown, len(files)):
         target = os.path.join(app.builder.outdir, file)
@@ -2157,8 +1714,23 @@ def html_collect_pages(app):
         sphinx.util.copyfile(
             os.path.join(app.env.nbsphinx_auxdir, notebook),
             os.path.join(app.builder.outdir, notebook))
-    return []  # No new HTML pages are created
 
+    context = {
+        'nbsphinx_responsive_width': app.config.nbsphinx_responsive_width,
+        'nbsphinx_prompt_width': app.config.nbsphinx_prompt_width,
+    }
+    assets = (
+        'nbsphinx-code-cells.css_t',
+        'nbsphinx-gallery.css',
+        'nbsphinx-no-thumbnail.svg',
+        'nbsphinx-broken-thumbnail.svg',
+    )
+    for a in assets:
+        sphinx.util.fileutil.copy_asset(
+            os.path.join(os.path.dirname(__file__), '_static', a),
+            os.path.join(app.builder.outdir, '_static'),
+            context=context)
+    return []  # No new HTML pages are created
 
 def env_updated(app, env):
     widgets_path = app.config.nbsphinx_widgets_path
@@ -2181,11 +1753,15 @@ def env_updated(app, env):
 
 
 def doctree_resolved(app, doctree, fromdocname):
+    base = sphinx.util.osutil.relative_uri(
+        app.builder.get_target_uri(fromdocname), '')
+
     # Replace GalleryToc with toctree + GalleryNode
     for node in doctree.traverse(GalleryToc):
         toctree_wrapper, = node
-        if (len(toctree_wrapper) != 1 or
-                not isinstance(toctree_wrapper[0], sphinx.addnodes.toctree)):
+        if (len(toctree_wrapper) != 1 or not isinstance(
+                toctree_wrapper[0],
+                (sphinx.addnodes.toctree, DummyTocTree))):
             # This happens for LaTeX output
             node.replace_self(node.children)
             continue
@@ -2196,8 +1772,6 @@ def doctree_resolved(app, doctree, fromdocname):
                 if title is None:
                     title = app.env.titles[doc].astext()
                 uri = app.builder.get_relative_uri(fromdocname, doc)
-                base = sphinx.util.osutil.relative_uri(
-                    app.builder.get_target_uri(fromdocname), '')
 
                 # NB: This is how Sphinx implements the "html_sidebars"
                 #     config value in StandaloneHTMLBuilder.add_sidebars()
@@ -2227,19 +1801,31 @@ def doctree_resolved(app, doctree, fromdocname):
                         conf_py_thumbnail = candidate
 
                 thumbnail = app.env.nbsphinx_thumbnails.get(doc, {})
+                # NB: "None" is used as marker for implicit thumbnail:
                 tooltip = thumbnail.get('tooltip', '')
                 filename = thumbnail.get('filename', '')
+
+                # thumbnail priority: broken, explicit in notebook,
+                #     from conf.py, implicit in notebook, default
                 if filename is _BROKEN_THUMBNAIL:
                     filename = os.path.join(
-                        base, '_static', 'broken_example.png')
-                elif filename:
+                        base, '_static', 'nbsphinx-broken-thumbnail.svg')
+                elif filename and tooltip is not None:
+                    # thumbnail from tagged cell or metadata
                     filename = os.path.join(
                         base, app.builder.imagedir, filename)
                 elif conf_py_thumbnail:
                     # NB: Settings from conf.py can be overwritten in notebook
                     filename = os.path.join(base, conf_py_thumbnail)
+                elif filename:
+                    # implicit thumbnail from the last image in the notebook
+                    assert tooltip is None
+                    tooltip = ''
+                    filename = os.path.join(
+                        base, app.builder.imagedir, filename)
                 else:
-                    filename = os.path.join(base, '_static', 'no_image.png')
+                    filename = os.path.join(
+                        base, '_static', 'nbsphinx-no-thumbnail.svg')
                 entries.append((title, uri, filename, tooltip))
             else:
                 logger.warning(
@@ -2247,10 +1833,33 @@ def doctree_resolved(app, doctree, fromdocname):
                     location=fromdocname, type='nbsphinx', subtype='gallery')
         gallery = GalleryNode()
         gallery['entries'] = entries
-        toctree['nbsphinx_gallery'] = True
-        toctree_wrapper[:] = toctree,
-        node.replace_self([toctree_wrapper, gallery])
-        # NB: Further processing happens in patched_toctree_resolve()
+        if isinstance(toctree, DummyTocTree):
+            # NbLinkGallery, toctree is only used to get optional caption.
+
+            # Copied from sphinx/environment/adapters/toctree.py:
+            newnode = sphinx.addnodes.compact_paragraph('', '')
+            caption = toctree.attributes.get('caption')
+            if caption:
+                caption_node = docutils.nodes.title(
+                    caption, '', *[docutils.nodes.Text(caption)])
+                caption_node.line = toctree.line
+                caption_node.source = toctree.source
+                #caption_node.rawsource = toctree['rawcaption']
+                if hasattr(toctree, 'uid'):
+                    # move uid to caption_node to translate it
+                    caption_node.uid = toctree.uid  # type: ignore
+                    del toctree.uid
+                newnode += caption_node
+            newnode['toctree'] = True
+
+            toctree_wrapper[0] = newnode
+        else:
+            # NbGallery
+            toctree['nbsphinx_gallery'] = True
+            # NB: Further processing happens in patched_toctree_resolve()
+        toctree_wrapper += gallery
+        node.replace_self(toctree_wrapper)
+        doctree['nbsphinx_gallery_css'] = True
 
 
 def depart_codearea_html(self, node):
@@ -2281,7 +1890,6 @@ def depart_codearea_latex(self, node):
     out.append('{')  # Start a scope for colors
     if 'nbinput' in node.parent['classes']:
         promptcolor = 'nbsphinxin'
-        out.append(r'\sphinxsetup{VerbatimColor={named}{nbsphinx-code-bg}}')
     else:
         out.append(r"""
 \kern-\sphinxverbatimsmallskipamount\kern-\baselineskip
@@ -2293,9 +1901,6 @@ def depart_codearea_latex(self, node):
             out.append(r'\sphinxsetup{VerbatimColor={named}{nbsphinx-stderr}}')
         else:
             out.append(r'\sphinxsetup{VerbatimColor={named}{white}}')
-
-    out.append(
-        r'\sphinxsetup{VerbatimBorderColor={named}{nbsphinx-code-border}}')
     if lines[0].startswith(r'\fvset{'):  # Sphinx >= 1.6.6 and < 1.8.3
         out.append(lines[0])
         del lines[0]
@@ -2369,9 +1974,17 @@ def depart_admonition_html(self, node):
 
 
 def visit_admonition_latex(self, node):
-    # See http://tex.stackexchange.com/q/305898/:
-    self.body.append(
-        '\n\\begin{sphinxadmonition}{' + node['classes'][1] + '}{}\\unskip')
+    kind = node['classes'][1]
+    if len(node.children) >= 2 and isinstance(
+            node.children[0], docutils.nodes.paragraph):
+        title = node.children[0].astext()
+        del node.children[0]
+        self.body.append(
+            '\n\\begin{sphinxadmonition}{' + kind + '}{' + title + '}\\par')
+    else:
+        # See http://tex.stackexchange.com/q/305898/:
+        self.body.append(
+            '\n\\begin{sphinxadmonition}{' + kind + '}{}\\unskip')
 
 
 def depart_admonition_latex(self, node):
@@ -2387,29 +2000,22 @@ def depart_admonition_text(self, node):
 
 
 def depart_gallery_html(self, node):
+    self.body.append('<div class="nbsphinx-gallery">\n')
     for title, uri, filename, tooltip in node['entries']:
         if tooltip:
-            tooltip = ' tooltip="{}"'.format(html.escape(tooltip))
+            tooltip = ' title="{}"'.format(html.escape(tooltip))
         self.body.append("""\
-<div class="sphx-glr-thumbcontainer"{tooltip}>
-  <div class="figure align-center">
-    <img alt="thumbnail" src="{filename}" />
-    <p class="caption">
-      <span class="caption-text">
-        <a class="reference internal" href="{uri}">
-          <span class="std std-ref">{title}</span>
-        </a>
-      </span>
-    </p>
-  </div>
-</div>
+<a class="reference internal" href="{uri}"{tooltip}>
+  <div><img alt="" src="{filename}"></div>
+  <div>{title}</div>
+</a>
 """.format(
             uri=html.escape(uri),
             title=html.escape(title),
             tooltip=tooltip,
             filename=html.escape(filename),
         ))
-    self.body.append('<div class="sphx-glr-clear"></div>')
+    self.body.append('</div>\n')
 
 
 def do_nothing(self, node):
@@ -2449,6 +2055,7 @@ def setup(app):
     app.add_directive('nbinfo', NbInfo)
     app.add_directive('nbwarning', NbWarning)
     app.add_directive('nbgallery', NbGallery)
+    app.add_directive('nblinkgallery', NbLinkGallery)
     app.add_node(CodeAreaNode,
                  html=(do_nothing, depart_codearea_html),
                  latex=(visit_codearea_latex, depart_codearea_latex),
@@ -2477,22 +2084,21 @@ def setup(app):
     app.add_transform(CreateDomainObjectLabels)
     app.add_transform(RewriteLocalLinks)
     app.add_post_transform(GetSizeFromImages)
+    app.add_latex_package('nbsphinx')
 
     # Make docutils' "code" directive (generated by markdown2rst/pandoc)
     # behave like Sphinx's "code-block",
     # see https://github.com/sphinx-doc/sphinx/issues/2155:
     rst.directives.register_directive('code', sphinx.directives.code.CodeBlock)
 
-    # Add LaTeX definitions to preamble
-    latex_elements = app.config._raw_config.setdefault('latex_elements', {})
-    latex_elements['preamble'] = '\n'.join([
-        LATEX_PREAMBLE,
-        latex_elements.get('preamble', ''),
-    ])
-
     # Monkey-patch Sphinx TocTree adapter
-    sphinx.environment.adapters.toctree.TocTree.resolve = \
-        patched_toctree_resolve
+    if hasattr(sphinx.environment.adapters.toctree, '_resolve_toctree'):
+        # Since Sphinx 7.2.0
+        sphinx.environment.adapters.toctree._resolve_toctree = \
+            patched_toctree_resolve
+    else:
+        sphinx.environment.adapters.toctree.TocTree.resolve = \
+            patched_toctree_resolve
 
     return {
         'version': __version__,
